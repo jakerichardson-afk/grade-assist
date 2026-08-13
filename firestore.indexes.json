@@ -1,0 +1,12 @@
+{
+  "indexes": [],
+  "fieldOverrides": [
+    {
+      "collectionGroup": "essays",
+      "fieldPath": "expireAt",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    }
+  ]
+}

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Grade Assist — batch grading with your own Claude API key</title>
+<title>Grade Assist — batch grading, signed in with Google</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -70,9 +70,16 @@
 
   .card-head {
     display: flex;
-    align-items: baseline;
+    align-items: center;
+    justify-content: space-between;
     gap: 10px;
     margin-bottom: 16px;
+  }
+
+  .card-head-left {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
   }
 
   .step-num {
@@ -178,6 +185,11 @@
   .btn-secondary { background: var(--surface); color: var(--ink); border: 1px solid var(--border); }
   .btn-secondary:hover:not(:disabled) { border-color: var(--ink-soft); }
 
+  .btn-small {
+    font-size: 12.5px;
+    padding: 6px 12px;
+  }
+
   .btn-row { display: flex; gap: 10px; align-items: center; margin-top: 4px; }
 
   .status-line {
@@ -238,20 +250,6 @@
   .badge-done { background: var(--green-soft); color: var(--green); }
   .badge-error { background: var(--red-soft); color: var(--red); }
 
-  .stamp {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-family: 'Space Grotesk', sans-serif;
-    font-weight: 700;
-    font-size: 13px;
-    color: var(--green);
-    border: 2px solid var(--green);
-    border-radius: 7px;
-    padding: 5px 12px;
-    transform: rotate(-2deg);
-  }
-
   .hint {
     font-size: 12.5px;
     color: var(--ink-soft);
@@ -274,6 +272,8 @@
     text-align: center;
     margin-top: 32px;
   }
+
+  #appBody { display: none; }
 </style>
 </head>
 <body>
@@ -282,93 +282,146 @@
 
   <header class="page-header">
     <h1>Grade Assist</h1>
-    <p>Upload a de-identified essay CSV and a rubric. Claude grades each row by ID. Runs entirely in your browser — nothing goes anywhere except directly to Anthropic's API, using your own key.</p>
+    <p>Upload a de-identified essay CSV and a rubric. Claude grades each row by ID. Access is restricted to a single signed-in Google account, and any essay text that touches the server is deleted automatically after 24 hours.</p>
   </header>
 
-  <!-- Step 1: API key + model -->
-  <div class="card">
+  <!-- Auth gate -->
+  <div class="card" id="authCard">
     <div class="card-head">
-      <span class="step-num">1</span>
-      <h2>Your API key</h2>
+      <div class="card-head-left"><h2>Sign in</h2></div>
     </div>
-    <div class="field">
-      <label for="apiKey">Anthropic API key</label>
-      <input type="password" id="apiKey" placeholder="sk-ant-..." autocomplete="off" />
-      <div class="checkbox-row">
-        <input type="checkbox" id="rememberKey" />
-        <label for="rememberKey" style="margin:0;">Remember this key in this browser (saved to localStorage — don't check this on a shared computer)</label>
+
+    <div id="authLoadingView">
+      <p class="hint">Checking sign-in status…</p>
+    </div>
+
+    <div id="signedOutView" style="display:none;">
+      <p class="hint" style="margin-top:0;">This tool is restricted to one Google account. Sign in to continue.</p>
+      <button class="btn btn-primary" id="signInBtn">Sign in with Google</button>
+      <div id="authErrorBox"></div>
+    </div>
+
+    <div id="signedInView" style="display:none;">
+      <p class="hint" style="margin-top:0;">Signed in as <strong id="whoAmI"></strong></p>
+      <button class="btn btn-secondary btn-small" id="signOutBtn">Sign out</button>
+    </div>
+
+    <div id="deniedView" style="display:none;">
+      <div class="error-box">
+        Signed in as <strong id="deniedEmail"></strong>, but this tool is restricted to a different account.
       </div>
+      <button class="btn btn-secondary btn-small" id="signOutBtnDenied" style="margin-top:10px;">Sign out</button>
     </div>
-    <div class="row">
+  </div>
+
+  <div id="appBody">
+
+    <!-- Step 1: Upload CSV + rubric -->
+    <div class="card">
+      <div class="card-head">
+        <div class="card-head-left">
+          <span class="step-num">1</span>
+          <h2>Essays and rubric</h2>
+        </div>
+      </div>
       <div class="field">
-        <label for="model">Model</label>
-        <select id="model">
-          <option value="claude-sonnet-5" selected>Claude Sonnet 5 (recommended)</option>
-          <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 (fastest / cheapest)</option>
-          <option value="claude-opus-4-8">Claude Opus 4.8 (most capable)</option>
-        </select>
+        <label>De-identified CSV (columns: <code>id</code>, <code>essay_text</code>)</label>
+        <div class="file-drop" id="csvDrop">
+          <input type="file" id="csvFile" accept=".csv" />
+          <span id="csvDropLabel">Click to choose a CSV file, or drag one here</span>
+        </div>
+      </div>
+      <div class="field">
+        <label for="rubric">Rubric</label>
+        <textarea id="rubric" placeholder="Paste your grading rubric here — criteria, point values, grade bands, whatever you'd normally give a grader..."></textarea>
+      </div>
+      <div class="field">
+        <label for="extraInstructions">Extra instructions (optional)</label>
+        <textarea id="extraInstructions" style="min-height:60px" placeholder="e.g. 'Grade as a 9th grade biology essay. Be encouraging but specific. Use letter grades.'"></textarea>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label for="model">Model</label>
+          <select id="model">
+            <option value="claude-sonnet-5" selected>Claude Sonnet 5 (recommended)</option>
+            <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 (fastest / cheapest)</option>
+            <option value="claude-opus-4-8">Claude Opus 4.8 (most capable)</option>
+          </select>
+        </div>
       </div>
     </div>
-    <p class="hint">Get a key at <a href="https://console.anthropic.com" target="_blank" rel="noopener">console.anthropic.com</a>. This is a separate account/billing from Claude.ai — API usage is billed per token. This tool does not use your Claude for Teachers account; it's a different product path (see note at the bottom).</p>
-  </div>
 
-  <!-- Step 2: Upload CSV + rubric -->
-  <div class="card">
-    <div class="card-head">
-      <span class="step-num">2</span>
-      <h2>Essays and rubric</h2>
-    </div>
-    <div class="field">
-      <label>De-identified CSV (columns: <code>id</code>, <code>essay_text</code>)</label>
-      <div class="file-drop" id="csvDrop">
-        <input type="file" id="csvFile" accept=".csv" />
-        <span id="csvDropLabel">Click to choose a CSV file, or drag one here</span>
+    <!-- Step 2: Run -->
+    <div class="card">
+      <div class="card-head">
+        <div class="card-head-left">
+          <span class="step-num">2</span>
+          <h2>Grade</h2>
+        </div>
       </div>
+      <div class="btn-row">
+        <button class="btn btn-primary" id="gradeBtn" disabled>Grade all</button>
+        <button class="btn btn-secondary" id="downloadBtn" disabled>Download results CSV</button>
+        <span class="status-line" id="statusLine"></span>
+      </div>
+      <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+      <div id="errorBox"></div>
+      <table id="resultsTable" style="display:none;">
+        <thead>
+          <tr><th style="width:110px;">ID</th><th style="width:70px;">Status</th><th style="width:70px;">Grade</th><th>Feedback</th></tr>
+        </thead>
+        <tbody id="resultsBody"></tbody>
+      </table>
     </div>
-    <div class="field">
-      <label for="rubric">Rubric</label>
-      <textarea id="rubric" placeholder="Paste your grading rubric here — criteria, point values, grade bands, whatever you'd normally give a grader..."></textarea>
-    </div>
-    <div class="field">
-      <label for="extraInstructions">Extra instructions (optional)</label>
-      <textarea id="extraInstructions" style="min-height:60px" placeholder="e.g. 'Grade as a 9th grade biology essay. Be encouraging but specific. Use letter grades.'"></textarea>
-    </div>
-  </div>
 
-  <!-- Step 3: Run -->
-  <div class="card">
-    <div class="card-head">
-      <span class="step-num">3</span>
-      <h2>Grade</h2>
-    </div>
-    <div class="btn-row">
-      <button class="btn btn-primary" id="gradeBtn" disabled>Grade all</button>
-      <button class="btn btn-secondary" id="downloadBtn" disabled>Download results CSV</button>
-      <span class="status-line" id="statusLine"></span>
-    </div>
-    <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
-    <div id="errorBox"></div>
-    <table id="resultsTable" style="display:none;">
-      <thead>
-        <tr><th style="width:110px;">ID</th><th style="width:70px;">Status</th><th style="width:70px;">Grade</th><th>Feedback</th></tr>
-      </thead>
-      <tbody id="resultsBody"></tbody>
-    </table>
   </div>
 
   <p class="footer-note">
-    Your API key and essay text are sent only to <code>api.anthropic.com</code>, directly from your browser, using your key.
-    Under Anthropic's commercial API terms, inputs aren't used for model training and are deleted from their backend within 30 days by default —
-    but this is a different data path than Claude for Teachers' K‑12 agreement, so confirm this fits your district's policy before using it with real student data.
+    Grading calls run through a Cloud Function that only accepts requests from the authorized signed-in account.
+    Essay text and results are stored temporarily to produce that response and are permanently deleted on an hourly
+    sweep, at most 24 hours after grading — but this is still a different data path than Claude for Teachers' K‑12
+    agreement, so confirm this fits your district's policy before using it with real student data.
   </p>
 
 </div>
 
-<script>
-(function () {
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+  import {
+    getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged,
+  } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+  import {
+    getFunctions, httpsCallable,
+  } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js";
+
+  const firebaseConfig = {
+    projectId: "grade-assist-jr",
+    appId: "1:36847271642:web:fef7b5553789fe89bbafe3",
+    storageBucket: "grade-assist-jr.firebasestorage.app",
+    apiKey: "AIzaSyD-Zmjx9Lvkc78BMfiJADFGvBRulbAXq60",
+    authDomain: "grade-assist-jr.firebaseapp.com",
+    messagingSenderId: "36847271642",
+  };
+
+  const ALLOWED_EMAIL = "jake.richardson@gmail.com";
+
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const functions = getFunctions(app);
+  const gradeEssayFn = httpsCallable(functions, "gradeEssay");
+
   const els = {
-    apiKey: document.getElementById('apiKey'),
-    rememberKey: document.getElementById('rememberKey'),
+    authLoadingView: document.getElementById('authLoadingView'),
+    signedOutView: document.getElementById('signedOutView'),
+    signedInView: document.getElementById('signedInView'),
+    deniedView: document.getElementById('deniedView'),
+    whoAmI: document.getElementById('whoAmI'),
+    deniedEmail: document.getElementById('deniedEmail'),
+    signInBtn: document.getElementById('signInBtn'),
+    authErrorBox: document.getElementById('authErrorBox'),
+    signOutBtn: document.getElementById('signOutBtn'),
+    signOutBtnDenied: document.getElementById('signOutBtnDenied'),
+    appBody: document.getElementById('appBody'),
     model: document.getElementById('model'),
     csvFile: document.getElementById('csvFile'),
     csvDrop: document.getElementById('csvDrop'),
@@ -384,29 +437,44 @@
     resultsBody: document.getElementById('resultsBody'),
   };
 
+  function showOnly(view) {
+    for (const v of ['authLoadingView', 'signedOutView', 'signedInView', 'deniedView']) {
+      els[v].style.display = v === view ? '' : 'none';
+    }
+  }
+
+  els.signInBtn.addEventListener('click', () => {
+    els.authErrorBox.innerHTML = '';
+    signInWithPopup(auth, new GoogleAuthProvider()).catch((err) => {
+      if (err.code === 'auth/popup-closed-by-user' || err.code === 'auth/cancelled-popup-request') return;
+      els.authErrorBox.innerHTML = `<div class="error-box">Sign-in failed: ${escapeHtml(err.message || String(err))}</div>`;
+    });
+  });
+  els.signOutBtn.addEventListener('click', () => signOut(auth));
+  els.signOutBtnDenied.addEventListener('click', () => signOut(auth));
+
+  onAuthStateChanged(auth, (user) => {
+    if (!user) {
+      showOnly('signedOutView');
+      els.appBody.style.display = 'none';
+      return;
+    }
+    if (user.email !== ALLOWED_EMAIL || !user.emailVerified) {
+      showOnly('deniedView');
+      els.deniedEmail.textContent = user.email || '(unknown)';
+      els.appBody.style.display = 'none';
+      return;
+    }
+    showOnly('signedInView');
+    els.whoAmI.textContent = user.email;
+    els.appBody.style.display = '';
+    updateGradeButtonState();
+  });
+
   let rows = [];       // [{id, essay_text}]
   let results = {};    // id -> {status, grade, feedback, error}
   const CONCURRENCY = 3;
   const MAX_RETRIES = 3;
-
-  // --- Restore remembered key ---
-  const savedKey = localStorage.getItem('grade_assist_api_key');
-  if (savedKey) {
-    els.apiKey.value = savedKey;
-    els.rememberKey.checked = true;
-  }
-  els.rememberKey.addEventListener('change', () => {
-    if (els.rememberKey.checked && els.apiKey.value) {
-      localStorage.setItem('grade_assist_api_key', els.apiKey.value);
-    } else {
-      localStorage.removeItem('grade_assist_api_key');
-    }
-  });
-  els.apiKey.addEventListener('input', () => {
-    if (els.rememberKey.checked) {
-      localStorage.setItem('grade_assist_api_key', els.apiKey.value);
-    }
-  });
 
   // --- CSV upload ---
   els.csvDrop.addEventListener('click', () => els.csvFile.click());
@@ -451,10 +519,10 @@
   els.rubric.addEventListener('input', updateGradeButtonState);
 
   function updateGradeButtonState() {
-    const ready = rows.length > 0 && els.rubric.value.trim().length > 0 && els.apiKey.value.trim().length > 0;
+    const signedInOk = auth.currentUser && auth.currentUser.email === ALLOWED_EMAIL && auth.currentUser.emailVerified;
+    const ready = signedInOk && rows.length > 0 && els.rubric.value.trim().length > 0;
     els.gradeBtn.disabled = !ready;
   }
-  els.apiKey.addEventListener('input', updateGradeButtonState);
 
   function showError(msg) {
     els.errorBox.innerHTML = `<div class="error-box">${escapeHtml(msg)}</div>`;
@@ -510,7 +578,7 @@
     clearError();
     els.gradeBtn.disabled = true;
     els.downloadBtn.disabled = true;
-    const apiKey = els.apiKey.value.trim();
+    const jobId = crypto.randomUUID();
     const model = els.model.value;
     const rubric = els.rubric.value.trim();
     const extra = els.extraInstructions.value.trim();
@@ -526,7 +594,7 @@
         results[row.id].status = 'grading';
         updateRow(row.id);
         try {
-          const graded = await gradeOne(apiKey, model, rubric, extra, row.essay_text);
+          const graded = await gradeOne(jobId, row.id, model, rubric, extra, row.essay_text);
           results[row.id] = { status: 'done', grade: graded.grade, feedback: graded.feedback, error: '' };
         } catch (err) {
           results[row.id] = { status: 'error', grade: '', feedback: '', error: err.message || String(err) };
@@ -538,84 +606,29 @@
 
     const workers = Array.from({ length: Math.min(CONCURRENCY, rows.length) }, worker);
     await Promise.all(workers);
-    els.gradeBtn.disabled = false;
+    updateGradeButtonState();
   });
 
-  async function gradeOne(apiKey, model, rubric, extra, essayText) {
-    const systemPrompt = [
-      "You are grading a student's essay strictly according to the rubric provided.",
-      extra ? `Additional instructions: ${extra}` : null,
-      'Respond with ONLY a single valid JSON object, no markdown fences, no extra text, in exactly this shape:',
-      '{"grade": "<letter or numeric grade per the rubric>", "feedback": "<2-4 sentences of specific, constructive feedback>"}',
-    ].filter(Boolean).join('\n');
-
-    const userContent = `RUBRIC:\n${rubric}\n\nSTUDENT ESSAY:\n${essayText}`;
-
+  async function gradeOne(jobId, essayId, model, rubric, extra, essayText) {
     let lastErr;
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        const resp = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            'x-api-key': apiKey,
-            'anthropic-version': '2023-06-01',
-            'anthropic-dangerous-direct-browser-access': 'true',
-          },
-          body: JSON.stringify({
-            model: model,
-            max_tokens: 600,
-            system: systemPrompt,
-            messages: [{ role: 'user', content: userContent }],
-          }),
-        });
-
-        if (resp.status === 429 || resp.status >= 500) {
-          throw new RetriableError(`Server busy (HTTP ${resp.status})`);
-        }
-        if (!resp.ok) {
-          const errBody = await resp.json().catch(() => ({}));
-          throw new Error(errBody?.error?.message || `HTTP ${resp.status}`);
-        }
-        const data = await resp.json();
-        const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
-        return parseGradeJson(text);
+        const resp = await gradeEssayFn({ jobId, essayId, essayText, rubric, extra, model });
+        return resp.data;
       } catch (err) {
         lastErr = err;
-        if (err instanceof RetriableError && attempt < MAX_RETRIES) {
+        const retriable = err.code === 'functions/unavailable' || err.code === 'functions/deadline-exceeded' || err.code === 'functions/resource-exhausted';
+        if (retriable && attempt < MAX_RETRIES) {
           await sleep(500 * Math.pow(2, attempt));
           continue;
         }
-        throw err;
+        throw new Error(err.message || String(err));
       }
     }
     throw lastErr;
   }
 
-  function RetriableError(msg) { this.message = msg; }
-  RetriableError.prototype = Object.create(Error.prototype);
-
   function sleep(ms) { return new Promise(res => setTimeout(res, ms)); }
-
-  function parseGradeJson(text) {
-    let cleaned = text.trim();
-    // Strip markdown code fences if present
-    cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
-    try {
-      const obj = JSON.parse(cleaned);
-      return { grade: String(obj.grade ?? ''), feedback: String(obj.feedback ?? '') };
-    } catch (e) {
-      // Fallback: try to find a {...} substring
-      const match = cleaned.match(/\{[\s\S]*\}/);
-      if (match) {
-        try {
-          const obj = JSON.parse(match[0]);
-          return { grade: String(obj.grade ?? ''), feedback: String(obj.feedback ?? '') };
-        } catch (e2) { /* fall through */ }
-      }
-      throw new Error('Could not parse grading response as JSON: ' + cleaned.slice(0, 120));
-    }
-  }
 
   // --- Download results CSV ---
   els.downloadBtn.addEventListener('click', () => {
@@ -635,7 +648,6 @@
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   });
-})();
 </script>
 
 </body>
