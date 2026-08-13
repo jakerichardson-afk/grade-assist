@@ -512,7 +512,7 @@
           essay_text: r.essay_text || r.Essay_text || r.ESSAY_TEXT,
         })).filter(r => r.id);
         results = {};
-        rows.forEach(r => { results[r.id] = { status: 'pending', grade: '', feedback: '', error: '' }; });
+        rows.forEach(r => { results[r.id] = { status: 'pending', grade: '', feedback: '', reasoning: '', error: '' }; });
         els.csvDropLabel.textContent = `${file.name} — ${rows.length} row(s) loaded`;
         els.csvDrop.classList.add('has-file');
         renderTable();
@@ -584,11 +584,14 @@
     const badgeText = {
       pending: 'waiting', grading: 'grading…', done: 'done', error: 'error',
     }[res.status] || 'waiting';
+    const reasoningHtml = res.status === 'done' && res.reasoning
+      ? `<details style="margin-top:6px;"><summary style="cursor:pointer;color:var(--green);">Grading reasoning</summary><div style="margin-top:6px;white-space:pre-wrap;">${escapeHtml(res.reasoning)}</div></details>`
+      : '';
     return `<tr id="row-${escapeHtml(id)}">
       <td class="id-cell">${escapeHtml(id)}</td>
       <td><span class="badge ${badgeClass}">${badgeText}</span></td>
       <td>${escapeHtml(res.grade || '')}</td>
-      <td class="feedback-cell">${escapeHtml(res.status === 'error' ? res.error : (res.feedback || ''))}</td>
+      <td class="feedback-cell">${escapeHtml(res.status === 'error' ? res.error : (res.feedback || ''))}${reasoningHtml}</td>
     </tr>`;
   }
 
@@ -618,7 +621,7 @@
     const rubric = els.rubric.value.trim();
     const extra = els.extraInstructions.value.trim();
 
-    rows.forEach(r => { results[r.id] = { status: 'pending', grade: '', feedback: '', error: '' }; });
+    rows.forEach(r => { results[r.id] = { status: 'pending', grade: '', feedback: '', reasoning: '', error: '' }; });
     renderTable();
     updateProgress();
 
@@ -630,7 +633,7 @@
         updateRow(row.id);
         try {
           const graded = await gradeOne(jobId, row.id, model, rubric, extra, row.essay_text);
-          results[row.id] = { status: 'done', grade: graded.grade, feedback: graded.feedback, error: '' };
+          results[row.id] = { status: 'done', grade: graded.grade, feedback: graded.feedback, reasoning: graded.reasoning, error: '' };
         } catch (err) {
           results[row.id] = { status: 'error', grade: '', feedback: '', error: err.message || String(err) };
         }
@@ -673,6 +676,7 @@
         id: r.id,
         grade: res.status === 'done' ? res.grade : '',
         feedback: res.status === 'error' ? `ERROR: ${res.error}` : (res.feedback || ''),
+        reasoning: res.status === 'done' ? (res.reasoning || '') : '',
       };
     });
     const csv = Papa.unparse(csvRows);

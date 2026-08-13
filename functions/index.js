@@ -25,7 +25,8 @@ exports.gradeEssay = onCall({ secrets: [anthropicApiKey] }, async (request) => {
   const systemPrompt = [
     "You are grading a student's essay strictly according to the rubric provided.",
     extra ? `Additional instructions: ${extra}` : null,
-    "Score the essay from 0 to 100 using the submit_grade tool:",
+    "First, in rubric_reasoning, go through the rubric criterion by criterion. For each one, quote or paraphrase the specific part of the essay that addresses it (or note that it's missing), and say whether that criterion is met, partially met, or not met. Base the grade only on what's actually in the essay, not on assumptions about what the student probably meant.",
+    "Then score the essay from 0 to 100 in grade, consistent with that reasoning:",
     "- 90-100: the essay meets grade-level requirements -- it fully and clearly satisfies the rubric.",
     "- 70-80: the essay generally meets the requirements but has gaps, thin development, or inconsistent execution.",
     "- Below 70: the essay falls short of the requirements in significant ways.",
@@ -40,6 +41,10 @@ exports.gradeEssay = onCall({ secrets: [anthropicApiKey] }, async (request) => {
     input_schema: {
       type: "object",
       properties: {
+        rubric_reasoning: {
+          type: "string",
+          description: "Criterion-by-criterion walkthrough of how the essay does or doesn't satisfy the rubric, citing the essay's actual content. This is shown to the teacher to audit the grade, so be specific and concrete.",
+        },
         grade: {
           type: "integer",
           minimum: 0,
@@ -48,10 +53,10 @@ exports.gradeEssay = onCall({ secrets: [anthropicApiKey] }, async (request) => {
         },
         feedback: {
           type: "string",
-          description: "2-4 sentences of specific, constructive feedback.",
+          description: "2-4 sentences of specific, constructive feedback for the student.",
         },
       },
-      required: ["grade", "feedback"],
+      required: ["rubric_reasoning", "grade", "feedback"],
     },
   };
 
@@ -85,6 +90,7 @@ exports.gradeEssay = onCall({ secrets: [anthropicApiKey] }, async (request) => {
   const parsed = {
     grade: Math.max(0, Math.min(100, Math.round(toolUse.input.grade))),
     feedback: String(toolUse.input.feedback ?? "").trim(),
+    reasoning: String(toolUse.input.rubric_reasoning ?? "").trim(),
   };
 
   const expireAt = Timestamp.fromMillis(Date.now() + RETENTION_MS);
@@ -93,6 +99,7 @@ exports.gradeEssay = onCall({ secrets: [anthropicApiKey] }, async (request) => {
     essayText,
     grade: parsed.grade,
     feedback: parsed.feedback,
+    reasoning: parsed.reasoning,
     gradedAt: FieldValue.serverTimestamp(),
     expireAt,
   });
