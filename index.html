@@ -652,7 +652,7 @@
         return resp.data;
       } catch (err) {
         lastErr = err;
-        const retriable = err.code === 'functions/unavailable' || err.code === 'functions/deadline-exceeded' || err.code === 'functions/resource-exhausted';
+        const retriable = err.code === 'functions/unavailable' || err.code === 'functions/deadline-exceeded' || err.code === 'functions/resource-exhausted' || err.code === 'functions/internal';
         if (retriable && attempt < MAX_RETRIES) {
           await sleep(500 * Math.pow(2, attempt));
           continue;
@@ -667,11 +667,14 @@
 
   // --- Download results CSV ---
   els.downloadBtn.addEventListener('click', () => {
-    const csvRows = rows.map(r => ({
-      id: r.id,
-      grade: results[r.id].grade || '',
-      feedback: results[r.id].feedback || '',
-    }));
+    const csvRows = rows.map(r => {
+      const res = results[r.id];
+      return {
+        id: r.id,
+        grade: res.status === 'done' ? res.grade : '',
+        feedback: res.status === 'error' ? `ERROR: ${res.error}` : (res.feedback || ''),
+      };
+    });
     const csv = Papa.unparse(csvRows);
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);

@@ -25,11 +25,35 @@ exports.gradeEssay = onCall({ secrets: [anthropicApiKey] }, async (request) => {
   const systemPrompt = [
     "You are grading a student's essay strictly according to the rubric provided.",
     extra ? `Additional instructions: ${extra}` : null,
-    "Respond with ONLY a single valid JSON object, no markdown fences, no extra text, in exactly this shape:",
-    '{"grade": "<letter or numeric grade per the rubric>", "feedback": "<2-4 sentences of specific, constructive feedback>"}',
+    "Score the essay from 0 to 100 using the submit_grade tool:",
+    "- 90-100: the essay meets grade-level requirements -- it fully and clearly satisfies the rubric.",
+    "- 70-80: the essay generally meets the requirements but has gaps, thin development, or inconsistent execution.",
+    "- Below 70: the essay falls short of the requirements in significant ways.",
+    "- Use your judgment for scores between these bands (e.g. 81-89) based on how well the essay satisfies the rubric.",
   ].filter(Boolean).join("\n");
 
   const userContent = `RUBRIC:\n${rubric}\n\nSTUDENT ESSAY:\n${essayText}`;
+
+  const GRADE_TOOL = {
+    name: "submit_grade",
+    description: "Submit the grade and feedback for this essay.",
+    input_schema: {
+      type: "object",
+      properties: {
+        grade: {
+          type: "integer",
+          minimum: 0,
+          maximum: 100,
+          description: "A single percentage score from 0 to 100. Just the integer -- no letter grade, no percent sign.",
+        },
+        feedback: {
+          type: "string",
+          description: "2-4 sentences of specific, constructive feedback.",
+        },
+      },
+      required: ["grade", "feedback"],
+    },
+  };
 
   const resp = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -40,9 +64,11 @@ exports.gradeEssay = onCall({ secrets: [anthropicApiKey] }, async (request) => {
     },
     body: JSON.stringify({
       model,
-      max_tokens: 600,
+      max_tokens: 1024,
       system: systemPrompt,
       messages: [{ role: "user", content: userContent }],
+      tools: [GRADE_TOOL],
+      tool_choice: { type: "tool", name: "submit_grade" },
     }),
   });
 
@@ -52,8 +78,14 @@ exports.gradeEssay = onCall({ secrets: [anthropicApiKey] }, async (request) => {
   }
 
   const data = await resp.json();
-  const text = (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("");
-  const parsed = parseGradeJson(text);
+  const toolUse = (data.content || []).find((b) => b.type === "tool_use" && b.name === "submit_grade");
+  if (!toolUse || typeof toolUse.input?.grade !== "number") {
+    throw new HttpsError("internal", "Claude did not return a valid grade for this essay.");
+  }
+  const parsed = {
+    grade: Math.max(0, Math.min(100, Math.round(toolUse.input.grade))),
+    feedback: String(toolUse.input.feedback ?? "").trim(),
+  };
 
   const expireAt = Timestamp.fromMillis(Date.now() + RETENTION_MS);
   await db.doc(`jobs/${jobId}/essays/${essayId}`).set({
@@ -67,25 +99,6 @@ exports.gradeEssay = onCall({ secrets: [anthropicApiKey] }, async (request) => {
 
   return parsed;
 });
-
-function parseGradeJson(text) {
-  const cleaned = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
-  try {
-    const obj = JSON.parse(cleaned);
-    return { grade: String(obj.grade ?? ""), feedback: String(obj.feedback ?? "") };
-  } catch (e) {
-    const match = cleaned.match(/\{[\s\S]*\}/);
-    if (match) {
-      try {
-        const obj = JSON.parse(match[0]);
-        return { grade: String(obj.grade ?? ""), feedback: String(obj.feedback ?? "") };
-      } catch (e2) {
-        // fall through to error below
-      }
-    }
-    throw new HttpsError("internal", "Could not parse grading response as JSON: " + cleaned.slice(0, 120));
-  }
-}
 
 // Runs hourly and deletes any stored essay/result documents past their
 // 24h retention window, across every job.
