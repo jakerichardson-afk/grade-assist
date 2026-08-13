@@ -373,7 +373,7 @@
       <div id="errorBox"></div>
       <table id="resultsTable" style="display:none;">
         <thead>
-          <tr><th style="width:110px;">ID</th><th style="width:70px;">Status</th><th style="width:70px;">Grade</th><th>Feedback</th></tr>
+          <tr><th style="width:110px;">ID</th><th style="width:70px;">Status</th><th style="width:70px;">Grade</th><th>Feedback</th><th style="width:90px;">Action</th></tr>
         </thead>
         <tbody id="resultsBody"></tbody>
       </table>
@@ -479,7 +479,8 @@
   });
 
   let rows = [];       // [{id, essay_text}]
-  let results = {};    // id -> {status, grade, feedback, error}
+  let results = {};    // id -> {status, grade, feedback, reasoning, error}
+  let busy = false;    // true while any grading (single-row or batch) is in flight
   const CONCURRENCY = 3;
   const MAX_RETRIES = 3;
 
@@ -556,7 +557,7 @@
   function updateGradeButtonState() {
     const signedInOk = auth.currentUser && auth.currentUser.email === ALLOWED_EMAIL && auth.currentUser.emailVerified;
     const ready = signedInOk && rows.length > 0 && els.rubric.value.trim().length > 0;
-    els.gradeBtn.disabled = !ready;
+    els.gradeBtn.disabled = busy || !ready;
   }
 
   function showError(msg) {
@@ -587,11 +588,13 @@
     const reasoningHtml = res.status === 'done' && res.reasoning
       ? `<details style="margin-top:6px;"><summary style="cursor:pointer;color:var(--green);">Grading reasoning</summary><div style="margin-top:6px;white-space:pre-wrap;">${escapeHtml(res.reasoning)}</div></details>`
       : '';
+    const actionLabel = res.status === 'done' || res.status === 'error' ? 'Re-grade' : 'Grade';
     return `<tr id="row-${escapeHtml(id)}">
       <td class="id-cell">${escapeHtml(id)}</td>
       <td><span class="badge ${badgeClass}">${badgeText}</span></td>
       <td>${escapeHtml(res.grade || '')}</td>
       <td class="feedback-cell">${escapeHtml(res.status === 'error' ? res.error : (res.feedback || ''))}${reasoningHtml}</td>
+      <td><button type="button" class="btn btn-secondary btn-small grade-one-btn" data-id="${escapeHtml(id)}" ${busy ? 'disabled' : ''}>${actionLabel}</button></td>
     </tr>`;
   }
 
@@ -614,21 +617,25 @@
   // --- Grading ---
   els.gradeBtn.addEventListener('click', async () => {
     clearError();
-    els.gradeBtn.disabled = true;
+    busy = true;
+    updateGradeButtonState();
     els.downloadBtn.disabled = true;
     const jobId = crypto.randomUUID();
     const model = els.model.value;
     const rubric = els.rubric.value.trim();
     const extra = els.extraInstructions.value.trim();
 
-    rows.forEach(r => { results[r.id] = { status: 'pending', grade: '', feedback: '', reasoning: '', error: '' }; });
+    // Only (re-)grade rows that aren't already done, so testing a few rows
+    // individually first doesn't get re-run (and re-billed) by "Grade all".
+    const pending = rows.filter(r => results[r.id].status !== 'done');
+    pending.forEach(r => { results[r.id] = { status: 'pending', grade: '', feedback: '', reasoning: '', error: '' }; });
     renderTable();
     updateProgress();
 
     let idx = 0;
     async function worker() {
-      while (idx < rows.length) {
-        const row = rows[idx++];
+      while (idx < pending.length) {
+        const row = pending[idx++];
         results[row.id].status = 'grading';
         updateRow(row.id);
         try {
@@ -642,8 +649,42 @@
       }
     }
 
-    const workers = Array.from({ length: Math.min(CONCURRENCY, rows.length) }, worker);
+    const workers = Array.from({ length: Math.min(CONCURRENCY, pending.length) }, worker);
     await Promise.all(workers);
+    busy = false;
+    renderTable();
+    updateGradeButtonState();
+  });
+
+  // --- Grade one row at a time ---
+  els.resultsBody.addEventListener('click', async (e) => {
+    const btn = e.target.closest('.grade-one-btn');
+    if (!btn || busy) return;
+    const rowId = btn.dataset.id;
+    const row = rows.find(r => r.id === rowId);
+    if (!row) return;
+
+    clearError();
+    busy = true;
+    updateGradeButtonState();
+    renderTable();
+
+    const jobId = crypto.randomUUID();
+    const model = els.model.value;
+    const rubric = els.rubric.value.trim();
+    const extra = els.extraInstructions.value.trim();
+
+    results[rowId] = { status: 'grading', grade: '', feedback: '', reasoning: '', error: '' };
+    updateRow(rowId);
+    try {
+      const graded = await gradeOne(jobId, rowId, model, rubric, extra, row.essay_text);
+      results[rowId] = { status: 'done', grade: graded.grade, feedback: graded.feedback, reasoning: graded.reasoning, error: '' };
+    } catch (err) {
+      results[rowId] = { status: 'error', grade: '', feedback: '', error: err.message || String(err) };
+    }
+    updateProgress();
+    busy = false;
+    renderTable();
     updateGradeButtonState();
   });
 
