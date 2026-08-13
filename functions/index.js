@@ -69,7 +69,7 @@ exports.gradeEssay = onCall({ secrets: [anthropicApiKey] }, async (request) => {
     },
     body: JSON.stringify({
       model,
-      max_tokens: 1024,
+      max_tokens: 2048,
       system: systemPrompt,
       messages: [{ role: "user", content: userContent }],
       tools: [GRADE_TOOL],
@@ -84,6 +84,13 @@ exports.gradeEssay = onCall({ secrets: [anthropicApiKey] }, async (request) => {
 
   const data = await resp.json();
   const toolUse = (data.content || []).find((b) => b.type === "tool_use" && b.name === "submit_grade");
+  console.log("gradeEssay debug", JSON.stringify({
+    essayId,
+    stopReason: data.stop_reason,
+    contentBlockTypes: (data.content || []).map((b) => b.type),
+    toolUseInputKeys: toolUse ? Object.keys(toolUse.input || {}) : null,
+    reasoningLength: toolUse ? String(toolUse.input?.rubric_reasoning ?? "").length : null,
+  }));
   if (!toolUse || typeof toolUse.input?.grade !== "number") {
     throw new HttpsError("internal", "Claude did not return a valid grade for this essay.");
   }
@@ -92,6 +99,17 @@ exports.gradeEssay = onCall({ secrets: [anthropicApiKey] }, async (request) => {
     feedback: String(toolUse.input.feedback ?? "").trim(),
     reasoning: String(toolUse.input.rubric_reasoning ?? "").trim(),
   };
+
+  // A response that stopped early (usually hitting max_tokens mid-generation)
+  // can still produce a tool_use block with some fields filled and others
+  // empty -- e.g. reasoning + grade present but feedback cut off. Treat that
+  // as a failure (so the client retries) rather than returning a half result.
+  if (data.stop_reason !== "tool_use" || !parsed.feedback || !parsed.reasoning) {
+    throw new HttpsError(
+      "internal",
+      `Claude's response for this essay was incomplete (stop_reason: ${data.stop_reason}) -- retrying.`
+    );
+  }
 
   const expireAt = Timestamp.fromMillis(Date.now() + RETENTION_MS);
   await db.doc(`jobs/${jobId}/essays/${essayId}`).set({
