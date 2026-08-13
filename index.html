@@ -334,6 +334,11 @@
       <div class="field">
         <label for="rubric">Rubric</label>
         <textarea id="rubric" placeholder="Paste your grading rubric here — criteria, point values, grade bands, whatever you'd normally give a grader..."></textarea>
+        <div class="btn-row" style="margin-top:8px;">
+          <input type="file" id="rubricCsvFile" accept=".csv" style="display:none;" />
+          <button type="button" class="btn btn-secondary btn-small" id="rubricCsvBtn">Import rubric from CSV</button>
+          <span class="hint" style="margin:0;">Replaces the text above with the CSV's rows (any columns) formatted as a list — still editable after.</span>
+        </div>
       </div>
       <div class="field">
         <label for="extraInstructions">Extra instructions (optional)</label>
@@ -427,6 +432,8 @@
     csvDrop: document.getElementById('csvDrop'),
     csvDropLabel: document.getElementById('csvDropLabel'),
     rubric: document.getElementById('rubric'),
+    rubricCsvBtn: document.getElementById('rubricCsvBtn'),
+    rubricCsvFile: document.getElementById('rubricCsvFile'),
     extraInstructions: document.getElementById('extraInstructions'),
     gradeBtn: document.getElementById('gradeBtn'),
     downloadBtn: document.getElementById('downloadBtn'),
@@ -513,6 +520,34 @@
         clearError();
       },
       error: (err) => showError('Could not parse CSV: ' + err.message),
+    });
+  }
+
+  // --- Rubric CSV import ---
+  els.rubricCsvBtn.addEventListener('click', () => els.rubricCsvFile.click());
+  els.rubricCsvFile.addEventListener('change', () => {
+    if (els.rubricCsvFile.files.length) handleRubricCsvFile(els.rubricCsvFile.files[0]);
+    els.rubricCsvFile.value = '';
+  });
+
+  function handleRubricCsvFile(file) {
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (parsed) => {
+        const fields = parsed.meta.fields || [];
+        if (!fields.length || !parsed.data.length) {
+          showError('Rubric CSV has no usable rows.');
+          return;
+        }
+        const lines = parsed.data.map(row =>
+          '- ' + fields.map(f => `${f}: ${(row[f] ?? '').toString().trim()}`).join(' — ')
+        );
+        els.rubric.value = lines.join('\n');
+        updateGradeButtonState();
+        clearError();
+      },
+      error: (err) => showError('Could not parse rubric CSV: ' + err.message),
     });
   }
 
