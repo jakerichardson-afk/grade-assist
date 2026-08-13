@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Grade Assist — batch grading with your own Claude API key</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<style>
+  :root {
+    --bg: #F1F4F1;
+    --surface: #FFFFFF;
+    --ink: #182620;
+    --ink-soft: #4B5C53;
+    --border: #DCE3DE;
+    --accent: #C89B3C;
+    --accent-ink: #5C4413;
+    --green: #2F6B4F;
+    --green-soft: #E7F0EA;
+    --red: #B3452C;
+    --red-soft: #F7E9E4;
+    --radius: 10px;
+    --shadow: 0 1px 2px rgba(24,38,32,0.06), 0 2px 8px rgba(24,38,32,0.04);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    line-height: 1.5;
+  }
+
+  .wrap {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 48px 24px 96px;
+  }
+
+  header.page-header {
+    margin-bottom: 40px;
+  }
+
+  header.page-header h1 {
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 700;
+    font-size: 32px;
+    letter-spacing: -0.01em;
+    margin: 0 0 6px;
+  }
+
+  header.page-header p {
+    color: var(--ink-soft);
+    margin: 0;
+    font-size: 15px;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 24px;
+    margin-bottom: 20px;
+  }
+
+  .card-head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+
+  .step-num {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    color: var(--accent-ink);
+    background: #FBF1DC;
+    border: 1px solid #EAD9A8;
+    border-radius: 5px;
+    padding: 1px 7px;
+    flex-shrink: 0;
+  }
+
+  .card-head h2 {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 17px;
+    font-weight: 600;
+    margin: 0;
+  }
+
+  label {
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink-soft);
+    margin-bottom: 6px;
+  }
+
+  .field { margin-bottom: 16px; }
+  .field:last-child { margin-bottom: 0; }
+
+  input[type="password"],
+  input[type="text"],
+  select,
+  textarea {
+    width: 100%;
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: #FCFDFC;
+    color: var(--ink);
+  }
+
+  textarea {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    resize: vertical;
+    min-height: 110px;
+  }
+
+  input:focus, select:focus, textarea:focus {
+    outline: 2px solid var(--green);
+    outline-offset: 1px;
+    border-color: var(--green);
+  }
+
+  .row { display: flex; gap: 14px; }
+  .row > .field { flex: 1; }
+
+  .checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+    font-size: 13px;
+    color: var(--ink-soft);
+  }
+  .checkbox-row input { width: auto; }
+
+  .file-drop {
+    border: 1.5px dashed var(--border);
+    border-radius: 8px;
+    padding: 18px;
+    text-align: center;
+    font-size: 13px;
+    color: var(--ink-soft);
+    cursor: pointer;
+    background: #FBFCFB;
+    transition: border-color .15s;
+  }
+  .file-drop:hover { border-color: var(--green); }
+  .file-drop.has-file { border-style: solid; border-color: var(--green); color: var(--ink); background: var(--green-soft); }
+  .file-drop input[type="file"] { display: none; }
+
+  .btn {
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 600;
+    font-size: 14px;
+    border: none;
+    border-radius: 8px;
+    padding: 11px 20px;
+    cursor: pointer;
+    transition: transform .06s, opacity .15s;
+  }
+  .btn:active { transform: scale(0.98); }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  .btn-primary { background: var(--green); color: white; }
+  .btn-primary:hover:not(:disabled) { background: #275b42; }
+
+  .btn-secondary { background: var(--surface); color: var(--ink); border: 1px solid var(--border); }
+  .btn-secondary:hover:not(:disabled) { border-color: var(--ink-soft); }
+
+  .btn-row { display: flex; gap: 10px; align-items: center; margin-top: 4px; }
+
+  .status-line {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12.5px;
+    color: var(--ink-soft);
+  }
+
+  .progress-track {
+    height: 6px;
+    background: #E4E9E5;
+    border-radius: 999px;
+    overflow: hidden;
+    margin: 14px 0 10px;
+  }
+  .progress-fill {
+    height: 100%;
+    background: var(--green);
+    width: 0%;
+    transition: width .25s ease;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    margin-top: 4px;
+  }
+  th {
+    text-align: left;
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--ink-soft);
+    border-bottom: 1px solid var(--border);
+    padding: 8px 8px;
+  }
+  td {
+    padding: 9px 8px;
+    border-bottom: 1px solid #EEF1EE;
+    vertical-align: top;
+  }
+  td.id-cell { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--ink-soft); white-space: nowrap; }
+  td.feedback-cell { color: var(--ink-soft); }
+
+  .badge {
+    display: inline-block;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 2px 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+  .badge-pending { background: #EEF1EE; color: var(--ink-soft); }
+  .badge-grading { background: #FBF1DC; color: var(--accent-ink); }
+  .badge-done { background: var(--green-soft); color: var(--green); }
+  .badge-error { background: var(--red-soft); color: var(--red); }
+
+  .stamp {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 700;
+    font-size: 13px;
+    color: var(--green);
+    border: 2px solid var(--green);
+    border-radius: 7px;
+    padding: 5px 12px;
+    transform: rotate(-2deg);
+  }
+
+  .hint {
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    margin-top: 8px;
+  }
+  .hint a { color: var(--green); }
+
+  .error-box {
+    background: var(--red-soft);
+    color: var(--red);
+    border-radius: 7px;
+    padding: 10px 12px;
+    font-size: 13px;
+    margin-top: 10px;
+  }
+
+  .footer-note {
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    text-align: center;
+    margin-top: 32px;
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header class="page-header">
+    <h1>Grade Assist</h1>
+    <p>Upload a de-identified essay CSV and a rubric. Claude grades each row by ID. Runs entirely in your browser — nothing goes anywhere except directly to Anthropic's API, using your own key.</p>
+  </header>
+
+  <!-- Step 1: API key + model -->
+  <div class="card">
+    <div class="card-head">
+      <span class="step-num">1</span>
+      <h2>Your API key</h2>
+    </div>
+    <div class="field">
+      <label for="apiKey">Anthropic API key</label>
+      <input type="password" id="apiKey" placeholder="sk-ant-..." autocomplete="off" />
+      <div class="checkbox-row">
+        <input type="checkbox" id="rememberKey" />
+        <label for="rememberKey" style="margin:0;">Remember this key in this browser (saved to localStorage — don't check this on a shared computer)</label>
+      </div>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label for="model">Model</label>
+        <select id="model">
+          <option value="claude-sonnet-5" selected>Claude Sonnet 5 (recommended)</option>
+          <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 (fastest / cheapest)</option>
+          <option value="claude-opus-4-8">Claude Opus 4.8 (most capable)</option>
+        </select>
+      </div>
+    </div>
+    <p class="hint">Get a key at <a href="https://console.anthropic.com" target="_blank" rel="noopener">console.anthropic.com</a>. This is a separate account/billing from Claude.ai — API usage is billed per token. This tool does not use your Claude for Teachers account; it's a different product path (see note at the bottom).</p>
+  </div>
+
+  <!-- Step 2: Upload CSV + rubric -->
+  <div class="card">
+    <div class="card-head">
+      <span class="step-num">2</span>
+      <h2>Essays and rubric</h2>
+    </div>
+    <div class="field">
+      <label>De-identified CSV (columns: <code>id</code>, <code>essay_text</code>)</label>
+      <div class="file-drop" id="csvDrop">
+        <input type="file" id="csvFile" accept=".csv" />
+        <span id="csvDropLabel">Click to choose a CSV file, or drag one here</span>
+      </div>
+    </div>
+    <div class="field">
+      <label for="rubric">Rubric</label>
+      <textarea id="rubric" placeholder="Paste your grading rubric here — criteria, point values, grade bands, whatever you'd normally give a grader..."></textarea>
+    </div>
+    <div class="field">
+      <label for="extraInstructions">Extra instructions (optional)</label>
+      <textarea id="extraInstructions" style="min-height:60px" placeholder="e.g. 'Grade as a 9th grade biology essay. Be encouraging but specific. Use letter grades.'"></textarea>
+    </div>
+  </div>
+
+  <!-- Step 3: Run -->
+  <div class="card">
+    <div class="card-head">
+      <span class="step-num">3</span>
+      <h2>Grade</h2>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-primary" id="gradeBtn" disabled>Grade all</button>
+      <button class="btn btn-secondary" id="downloadBtn" disabled>Download results CSV</button>
+      <span class="status-line" id="statusLine"></span>
+    </div>
+    <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+    <div id="errorBox"></div>
+    <table id="resultsTable" style="display:none;">
+      <thead>
+        <tr><th style="width:110px;">ID</th><th style="width:70px;">Status</th><th style="width:70px;">Grade</th><th>Feedback</th></tr>
+      </thead>
+      <tbody id="resultsBody"></tbody>
+    </table>
+  </div>
+
+  <p class="footer-note">
+    Your API key and essay text are sent only to <code>api.anthropic.com</code>, directly from your browser, using your key.
+    Under Anthropic's commercial API terms, inputs aren't used for model training and are deleted from their backend within 30 days by default —
+    but this is a different data path than Claude for Teachers' K‑12 agreement, so confirm this fits your district's policy before using it with real student data.
+  </p>
+
+</div>
+
+<script>
+(function () {
+  const els = {
+    apiKey: document.getElementById('apiKey'),
+    rememberKey: document.getElementById('rememberKey'),
+    model: document.getElementById('model'),
+    csvFile: document.getElementById('csvFile'),
+    csvDrop: document.getElementById('csvDrop'),
+    csvDropLabel: document.getElementById('csvDropLabel'),
+    rubric: document.getElementById('rubric'),
+    extraInstructions: document.getElementById('extraInstructions'),
+    gradeBtn: document.getElementById('gradeBtn'),
+    downloadBtn: document.getElementById('downloadBtn'),
+    statusLine: document.getElementById('statusLine'),
+    progressFill: document.getElementById('progressFill'),
+    errorBox: document.getElementById('errorBox'),
+    resultsTable: document.getElementById('resultsTable'),
+    resultsBody: document.getElementById('resultsBody'),
+  };
+
+  let rows = [];       // [{id, essay_text}]
+  let results = {};    // id -> {status, grade, feedback, error}
+  const CONCURRENCY = 3;
+  const MAX_RETRIES = 3;
+
+  // --- Restore remembered key ---
+  const savedKey = localStorage.getItem('grade_assist_api_key');
+  if (savedKey) {
+    els.apiKey.value = savedKey;
+    els.rememberKey.checked = true;
+  }
+  els.rememberKey.addEventListener('change', () => {
+    if (els.rememberKey.checked && els.apiKey.value) {
+      localStorage.setItem('grade_assist_api_key', els.apiKey.value);
+    } else {
+      localStorage.removeItem('grade_assist_api_key');
+    }
+  });
+  els.apiKey.addEventListener('input', () => {
+    if (els.rememberKey.checked) {
+      localStorage.setItem('grade_assist_api_key', els.apiKey.value);
+    }
+  });
+
+  // --- CSV upload ---
+  els.csvDrop.addEventListener('click', () => els.csvFile.click());
+  els.csvDrop.addEventListener('dragover', (e) => { e.preventDefault(); });
+  els.csvDrop.addEventListener('drop', (e) => {
+    e.preventDefault();
+    if (e.dataTransfer.files.length) {
+      els.csvFile.files = e.dataTransfer.files;
+      handleCsvFile(e.dataTransfer.files[0]);
+    }
+  });
+  els.csvFile.addEventListener('change', () => {
+    if (els.csvFile.files.length) handleCsvFile(els.csvFile.files[0]);
+  });
+
+  function handleCsvFile(file) {
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (parsed) => {
+        const fields = (parsed.meta.fields || []).map(f => f.toLowerCase());
+        if (!fields.includes('id') || !fields.includes('essay_text')) {
+          showError(`CSV must have "id" and "essay_text" columns. Found: ${parsed.meta.fields.join(', ')}`);
+          return;
+        }
+        rows = parsed.data.map(r => ({
+          id: r.id || r.ID || r.Id,
+          essay_text: r.essay_text || r.Essay_text || r.ESSAY_TEXT,
+        })).filter(r => r.id);
+        results = {};
+        rows.forEach(r => { results[r.id] = { status: 'pending', grade: '', feedback: '', error: '' }; });
+        els.csvDropLabel.textContent = `${file.name} — ${rows.length} row(s) loaded`;
+        els.csvDrop.classList.add('has-file');
+        renderTable();
+        updateGradeButtonState();
+        clearError();
+      },
+      error: (err) => showError('Could not parse CSV: ' + err.message),
+    });
+  }
+
+  els.rubric.addEventListener('input', updateGradeButtonState);
+
+  function updateGradeButtonState() {
+    const ready = rows.length > 0 && els.rubric.value.trim().length > 0 && els.apiKey.value.trim().length > 0;
+    els.gradeBtn.disabled = !ready;
+  }
+  els.apiKey.addEventListener('input', updateGradeButtonState);
+
+  function showError(msg) {
+    els.errorBox.innerHTML = `<div class="error-box">${escapeHtml(msg)}</div>`;
+  }
+  function clearError() { els.errorBox.innerHTML = ''; }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function renderTable() {
+    els.resultsTable.style.display = rows.length ? 'table' : 'none';
+    els.resultsBody.innerHTML = rows.map(r => {
+      const res = results[r.id] || { status: 'pending' };
+      return rowHtml(r.id, res);
+    }).join('');
+  }
+
+  function rowHtml(id, res) {
+    const badgeClass = {
+      pending: 'badge-pending', grading: 'badge-grading',
+      done: 'badge-done', error: 'badge-error',
+    }[res.status] || 'badge-pending';
+    const badgeText = {
+      pending: 'waiting', grading: 'grading…', done: 'done', error: 'error',
+    }[res.status] || 'waiting';
+    return `<tr id="row-${escapeHtml(id)}">
+      <td class="id-cell">${escapeHtml(id)}</td>
+      <td><span class="badge ${badgeClass}">${badgeText}</span></td>
+      <td>${escapeHtml(res.grade || '')}</td>
+      <td class="feedback-cell">${escapeHtml(res.status === 'error' ? res.error : (res.feedback || ''))}</td>
+    </tr>`;
+  }
+
+  function updateRow(id) {
+    const tr = document.getElementById('row-' + CSS.escape(id));
+    if (tr) tr.outerHTML = rowHtml(id, results[id]);
+  }
+
+  function updateProgress() {
+    const total = rows.length;
+    const done = rows.filter(r => ['done', 'error'].includes(results[r.id].status)).length;
+    const pct = total ? Math.round((done / total) * 100) : 0;
+    els.progressFill.style.width = pct + '%';
+    els.statusLine.textContent = `${done} / ${total} graded`;
+    if (done === total && total > 0) {
+      els.downloadBtn.disabled = false;
+    }
+  }
+
+  // --- Grading ---
+  els.gradeBtn.addEventListener('click', async () => {
+    clearError();
+    els.gradeBtn.disabled = true;
+    els.downloadBtn.disabled = true;
+    const apiKey = els.apiKey.value.trim();
+    const model = els.model.value;
+    const rubric = els.rubric.value.trim();
+    const extra = els.extraInstructions.value.trim();
+
+    rows.forEach(r => { results[r.id] = { status: 'pending', grade: '', feedback: '', error: '' }; });
+    renderTable();
+    updateProgress();
+
+    let idx = 0;
+    async function worker() {
+      while (idx < rows.length) {
+        const row = rows[idx++];
+        results[row.id].status = 'grading';
+        updateRow(row.id);
+        try {
+          const graded = await gradeOne(apiKey, model, rubric, extra, row.essay_text);
+          results[row.id] = { status: 'done', grade: graded.grade, feedback: graded.feedback, error: '' };
+        } catch (err) {
+          results[row.id] = { status: 'error', grade: '', feedback: '', error: err.message || String(err) };
+        }
+        updateRow(row.id);
+        updateProgress();
+      }
+    }
+
+    const workers = Array.from({ length: Math.min(CONCURRENCY, rows.length) }, worker);
+    await Promise.all(workers);
+    els.gradeBtn.disabled = false;
+  });
+
+  async function gradeOne(apiKey, model, rubric, extra, essayText) {
+    const systemPrompt = [
+      "You are grading a student's essay strictly according to the rubric provided.",
+      extra ? `Additional instructions: ${extra}` : null,
+      'Respond with ONLY a single valid JSON object, no markdown fences, no extra text, in exactly this shape:',
+      '{"grade": "<letter or numeric grade per the rubric>", "feedback": "<2-4 sentences of specific, constructive feedback>"}',
+    ].filter(Boolean).join('\n');
+
+    const userContent = `RUBRIC:\n${rubric}\n\nSTUDENT ESSAY:\n${essayText}`;
+
+    let lastErr;
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const resp = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+            'anthropic-dangerous-direct-browser-access': 'true',
+          },
+          body: JSON.stringify({
+            model: model,
+            max_tokens: 600,
+            system: systemPrompt,
+            messages: [{ role: 'user', content: userContent }],
+          }),
+        });
+
+        if (resp.status === 429 || resp.status >= 500) {
+          throw new RetriableError(`Server busy (HTTP ${resp.status})`);
+        }
+        if (!resp.ok) {
+          const errBody = await resp.json().catch(() => ({}));
+          throw new Error(errBody?.error?.message || `HTTP ${resp.status}`);
+        }
+        const data = await resp.json();
+        const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+        return parseGradeJson(text);
+      } catch (err) {
+        lastErr = err;
+        if (err instanceof RetriableError && attempt < MAX_RETRIES) {
+          await sleep(500 * Math.pow(2, attempt));
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw lastErr;
+  }
+
+  function RetriableError(msg) { this.message = msg; }
+  RetriableError.prototype = Object.create(Error.prototype);
+
+  function sleep(ms) { return new Promise(res => setTimeout(res, ms)); }
+
+  function parseGradeJson(text) {
+    let cleaned = text.trim();
+    // Strip markdown code fences if present
+    cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+    try {
+      const obj = JSON.parse(cleaned);
+      return { grade: String(obj.grade ?? ''), feedback: String(obj.feedback ?? '') };
+    } catch (e) {
+      // Fallback: try to find a {...} substring
+      const match = cleaned.match(/\{[\s\S]*\}/);
+      if (match) {
+        try {
+          const obj = JSON.parse(match[0]);
+          return { grade: String(obj.grade ?? ''), feedback: String(obj.feedback ?? '') };
+        } catch (e2) { /* fall through */ }
+      }
+      throw new Error('Could not parse grading response as JSON: ' + cleaned.slice(0, 120));
+    }
+  }
+
+  // --- Download results CSV ---
+  els.downloadBtn.addEventListener('click', () => {
+    const csvRows = rows.map(r => ({
+      id: r.id,
+      grade: results[r.id].grade || '',
+      feedback: results[r.id].feedback || '',
+    }));
+    const csv = Papa.unparse(csvRows);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'graded_results.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  });
+})();
+</script>
+
+</body>
+</html>
